@@ -8,66 +8,40 @@ RUN apt-get update && \
     apt-get install --yes --no-install-recommends \
       autoconf \
       automake \
-      bubblewrap \
-      bzip2 \
       cmake \
       curl \
-      g++ \
-      gcc \
       git \
       libc6-dev \
-      libgmp-dev \
-      libmpfr-dev \
       libsqlite3-dev \
-      make \
+      opam \
       openjdk-8-jdk-headless \
-      patch \
       pkg-config \
       python2.7 \
-      unzip \
-      xz-utils \
       zlib1g-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Some scripts in facebook-clang-plugins assume "python" is available
-RUN cd /usr/local/bin && ln -s /usr/bin/python2.7 python
+# Download the latest Infer release
+RUN INFER_VERSION=v0.15.0; \
+    cd /opt && \
+    curl -sL \
+      https://github.com/facebook/infer/releases/download/${INFER_VERSION}/infer-linux64-${INFER_VERSION}.tar.xz | \
+    tar xJ && \
+    rm -f /infer && \
+    ln -s ${PWD}/infer-linux64-$INFER_VERSION /infer
 
-# Install opam 2
-RUN curl -sL https://github.com/ocaml/opam/releases/download/2.0.2/opam-2.0.2-x86_64-linux > /usr/bin/opam && \
-    chmod +x /usr/bin/opam
-
-# Disable sandboxing
-# Without this opam fails to compile OCaml for some reason. We don't need sandboxing inside a Docker container anyway.
-RUN opam init --reinit --bare --disable-sandboxing
-
-# Download the latest Infer master
-RUN cd / && \
-    git clone --recurse-submodules https://github.com/facebook/infer/
-
-# Build opam deps first, then clang, then infer. This way if any step
-# fails we don't lose the significant amount of work done in the
-# previous steps.
-RUN cd /infer && ./build-infer.sh --only-setup-opam
-RUN cd /infer && \
-    eval $(opam env) && \
-    ./autogen.sh && \
-    ./configure && \
-    ./facebook-clang-plugins/clang/setup.sh
-
-# Hackish for now: pull to get the latest version
-RUN cd /infer && git pull 
-
-# if called with /infer-host mounted then copy infer there
-RUN if test -d /infer-host; then \
-      cp -av /infer/. /infer-host; \
-    fi
+# Compile Infer
+RUN OCAML_VERSION=4.06.1+flambda; \
+    cd /infer && ./build-infer.sh --opam-switch $OCAML_VERSION && rm -rf /root/.opam
 
 # Install Infer
 ENV INFER_HOME /infer/infer
 ENV PATH ${INFER_HOME}/bin:${PATH}
 
-# build in non-optimized mode by default to speed up build times
-ENV BUILD_MODE=default
-
-# prevent exiting by compulsively hitting Control-D
-ENV IGNOREEOF=9
+ENV ANDROID_HOME /opt/android-sdk-linux
+WORKDIR $ANDROID_HOME
+RUN curl -o sdk-tools-linux.zip \
+      https://dl.google.com/android/repository/sdk-tools-linux-4333796.zip && \
+    unzip sdk-tools-linux.zip && \
+    rm sdk-tools-linux.zip
+ENV PATH ${ANDROID_HOME}/tools/bin:${PATH}
+RUN echo "sdk.dir=${ANDROID_HOME}" > /infer/examples/android_hello/local.properties
